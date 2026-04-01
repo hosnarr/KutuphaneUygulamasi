@@ -13,6 +13,60 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
 
+
+default_scroll_sheet = """
+    /* Ana Arka Plan */
+    QMainWindow { background-color: #ffffff; }
+
+    /* Dikey Scrollbar Tasarımı */
+    QScrollBar:vertical {
+        border: none;
+        background: #f1f1f1;
+        width: 10px;
+        margin: 0px 0px 0px 0px;
+        border-radius: 5px;
+    }
+
+    /* Kaydırma Çubuğunun Hareket Eden Kısmı (Handle) */
+    QScrollBar::handle:vertical {
+        background: #bbb;
+        min-height: 30px;
+        border-radius: 5px;
+    }
+
+    /* Mouse Üzerine Geldiğinde Handle Rengi */
+    QScrollBar::handle:vertical:hover {
+        background: #888;
+    }
+
+    /* Scrollbar Ok Tuşlarını Gizle (Modern görünüm için) */
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+        border: none;
+        background: none;
+        height: 0px;
+    }
+
+    /* Yatay Scrollbar Tasarımı (Gerekirse) */
+    QScrollBar:horizontal {
+        border: none;
+        background: #f1f1f1;
+        height: 10px;
+        border-radius: 5px;
+    }
+
+    QScrollBar::handle:horizontal {
+        background: #bbb;
+        min-width: 30px;
+        border-radius: 5px;
+    }
+
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+        border: none;
+        background: none;
+        width: 0px;
+    }
+"""
+
 # --- ZİMMETLEME PENCERESİ ---
 # Bu sınıf, bir kitabı belirli bir öğrenciye atamak (ödünç vermek) için açılan küçük penceredir.
 class ZimmetlePenceresi(QDialog):
@@ -22,7 +76,7 @@ class ZimmetlePenceresi(QDialog):
         self.setFixedWidth(450)
         self.setFixedHeight(500)
         # CSS benzeri StyleSheet ile modern bir görünüm kazandırıyoruz.
-        self.setStyleSheet("background-color: #ffffff; font-family: 'Segoe UI', sans-serif;")
+        self.setStyleSheet(default_scroll_sheet)
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 30, 30, 30)
@@ -78,7 +132,7 @@ class KitapEklePenceresi(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Yeni Kitap Kaydı")
         self.setFixedWidth(400)
-        self.setStyleSheet("background-color: #ffffff; font-family: 'Segoe UI', sans-serif;")
+        self.setStyleSheet(default_scroll_sheet)
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 30, 30, 30)
@@ -122,7 +176,7 @@ class KutuphaneUygulamasi(QMainWindow):
         super().__init__()
         self.setWindowTitle("Kütüphane Takip Sistemi")
         self.setGeometry(100, 100, 1200, 850)
-        self.setStyleSheet("background-color: #ffffff; font-family: 'Segoe UI', sans-serif;")
+        self.setStyleSheet(default_scroll_sheet)
         
         # Barkod görsellerinin kaydedileceği klasörü kontrol et/oluştur.
         if not os.path.exists("barkodlar"):
@@ -133,6 +187,87 @@ class KutuphaneUygulamasi(QMainWindow):
         self.arayuz_hazirla()        # Ana pencere bileşenlerini kur
         self.kayitlari_yukle()       # Kitapları tabloya çek
         self.ogrencileri_veritabanindan_cek()
+
+    # Kitap silme işlemi: Seçilen kitabı veritabanından kaldırır ve varsa o kitaba ait ödünç kayıtlarını da temizler.
+    def kitap_sil(self):
+        # Tablodan seçili satırı al
+        secili_satir = self.tablo.currentRow()
+        
+        if secili_satir < 0:
+            QMessageBox.warning(self, "Hata", "Lütfen silmek istediğiniz kitabı tablodan seçin!")
+            return
+
+        # ID ve Kitap Adını al (Kullanıcıya hangi kitabı sildiğini sormak için)
+        k_id = self.tablo.item(secili_satir, 0).data(Qt.UserRole)
+        k_adi = self.tablo.item(secili_satir, 1).text()
+
+        # Onay Kutusu
+        cevap = QMessageBox.question(self, "Silme Onayı", 
+                                    f"'{k_adi}' isimli kitabı silmek istediğinize emin misiniz?\nBu işlem geri alınamaz!",
+                                    QMessageBox.Yes | QMessageBox.No)
+
+        if cevap == QMessageBox.Yes:
+            try:
+                with sqlite3.connect("kutuphane.db") as baglanti:
+                    cursor = baglanti.cursor()
+                    # Veritabanından sil
+                    cursor.execute("DELETE FROM kitaplar WHERE id = ?", (k_id,))
+                    # Varsa o kitaba ait ödünç kayıtlarını da temizlemek istersen:
+                    cursor.execute("DELETE FROM odunc_kayitlari WHERE kitap_id = ?", (k_id,))
+                    baglanti.commit()
+                
+                # Tabloyu yenile
+                self.kayitlari_yukle()
+                QMessageBox.information(self, "Başarılı", "Kitap sistemden kaldırıldı.")
+            except Exception as e:
+                QMessageBox.critical(self, "Hata", f"Silme işlemi sırasında bir hata oluştu: {str(e)}")
+        self.istatistikleri_guncelle()
+
+
+    # kitaplerı bu fonsiyon ile topluca ekleriz. Excel dosyasındaki her satır için kitap kaydı oluşturur ve barkod üretir.
+    def kitap_excel_yukle(self):
+        yol, _ = QFileDialog.getOpenFileName(self, "Kitap Listesi Seç", "", "Excel Files (*.xlsx *.xls)")
+        if yol:
+            try:
+                df = pd.read_excel(yol)
+                # Sütun isimlerini standartlaştıralım (Opsiyonel: Eğer Excel başlıkları farklıysa index kullanırız)
+                with sqlite3.connect("kutuphane.db") as baglanti:
+                    cursor = baglanti.cursor()
+                    
+                    eklenen_sayisi = 0
+                    for _, r in df.iterrows():
+                        # Sütunları güvenli bir şekilde alalım (A=0, B=1, C=2)
+                        ad = str(r.iloc[0]) if pd.notnull(r.iloc[0]) else None
+                        yazar = str(r.iloc[1]) if pd.notnull(r.iloc[1]) else None
+                        # Kategori boşsa '-' ata
+                        kategori = str(r.iloc[2]) if len(r) > 2 and pd.notnull(r.iloc[2]) else "-"
+
+                        if ad and yazar:
+                            # Veritabanına ekle
+                            cursor.execute("INSERT INTO kitaplar (isim, yazar, kategori) VALUES (?, ?, ?)", 
+                                           (ad, yazar, kategori))
+                            k_id = cursor.lastrowid
+
+                            # Barkod üretimi
+                            b_no = "".join([str(random.randint(0, 9)) for _ in range(12)])
+                            
+                            def temizle(metin):
+                                return "".join([c for c in metin if c.isalnum()]).strip()
+
+                            dosya_adi = f"{temizle(ad)}_{temizle(yazar)}"
+                            barcode.get_barcode_class('ean13')(b_no, writer=ImageWriter()).save(f"barkodlar/{dosya_adi}")
+
+                            # Barkod numarasını (checksum dahil) güncelle
+                            cursor.execute("UPDATE kitaplar SET barkod_no = ? WHERE id = ?", (b_no + "0", k_id))
+                            eklenen_sayisi += 1
+                    
+                    baglanti.commit()
+                
+                self.kayitlari_yukle()
+                QMessageBox.information(self, "Başarılı", f"{eklenen_sayisi} adet kitap başarıyla yüklendi ve barkodları oluşturuldu.")
+            
+            except Exception as e:
+                QMessageBox.critical(self, "Hata", f"Kitap listesi yüklenirken hata oluştu: {str(e)}")
 
     # SQLite Veritabanı ve Tablo İşlemleri
     def vt_hazirla(self):
@@ -181,21 +316,42 @@ class KutuphaneUygulamasi(QMainWindow):
         navbar.addWidget(btn_excel)
         self.ana_duzen.addLayout(navbar)
 
-        # BAŞLIK VE ARAMA: Kullanıcıyı karşılayan alan ve hızlı arama çubuğu.
+        btn_kitap_excel = self.modern_buton("Kitap Excel Yükle", "#9b59b6", "white") # Mor renkli buton
+        btn_kitap_excel.clicked.connect(self.kitap_excel_yukle)
+        navbar.addWidget(btn_kitap_excel)
+
+        # BAŞLIK VE ÖZET BİLGİLER
         header = QHBoxLayout()
         baslik_v = QVBoxLayout()
-        lbl_m = QLabel("Kütüphane Takip Sistemi")
-        lbl_m.setStyleSheet("font-size: 30px; font-weight: bold;")
-        lbl_s = QLabel("Kitap, Barkod veya Kişi adına göre arama yapın.")
-        lbl_s.setStyleSheet("color: #777;")
-        baslik_v.addWidget(lbl_m)
-        baslik_v.addWidget(lbl_s)
         
+        lbl_m = QLabel("Kütüphane Takip Sistemi")
+        lbl_m.setStyleSheet("font-size: 28px; font-weight: bold; color: #1a2a6c;")
+        
+        # İstatistik Satırı
+        istatistik_layout = QHBoxLayout()
+        istatistik_layout.setSpacing(20)
+
+        # Toplam Kitap Sayacı
+        self.lbl_toplam_kitap = QLabel("📚 Toplam Kitap: 0")
+        self.lbl_toplam_kitap.setStyleSheet("font-size: 14px; color: #555; background: #f0f2f5; padding: 5px 12px; border-radius: 15px;")
+        
+        # Toplam Öğrenci Sayacı
+        self.lbl_toplam_ogrenci = QLabel("👤 Toplam Öğrenci: 0")
+        self.lbl_toplam_ogrenci.setStyleSheet("font-size: 14px; color: #555; background: #f0f2f5; padding: 5px 12px; border-radius: 15px;")
+
+        istatistik_layout.addWidget(self.lbl_toplam_kitap)
+        istatistik_layout.addWidget(self.lbl_toplam_ogrenci)
+        istatistik_layout.addStretch() # Yazıları sola yaslar
+
+        baslik_v.addWidget(lbl_m)
+        baslik_v.addLayout(istatistik_layout)
+        
+        # Arama Kutusu (Sağ tarafta kalmaya devam ediyor)
         self.txt_arama = QLineEdit()
-        self.txt_arama.setPlaceholderText("Arama yapın...")
-        self.txt_arama.setFixedWidth(350)
-        self.txt_arama.setStyleSheet("border: 1px solid #ddd; border-radius: 8px; padding: 10px;")
-        self.txt_arama.textChanged.connect(self.kayitlari_yukle) # Her harf değişiminde listeyi günceller.
+        self.txt_arama.setPlaceholderText("Hızlı arama...")
+        self.txt_arama.setFixedWidth(300)
+        self.txt_arama.setStyleSheet("border: 1px solid #ddd; border-radius: 20px; padding: 10px 15px;")
+        self.txt_arama.textChanged.connect(self.kayitlari_yukle)
         
         header.addLayout(baslik_v)
         header.addStretch()
@@ -216,10 +372,15 @@ class KutuphaneUygulamasi(QMainWindow):
         
         btn_iade = self.modern_buton("İade Al", "#e67e22", "white")
         btn_iade.clicked.connect(self.iade_al)
+
+        btn_sil = self.modern_buton("Kitabı Sil", "#e74c3c", "white") # Kırmızı renk
+        btn_sil.clicked.connect(self.kitap_sil)
+    
         
         islem_bar.addWidget(btn_ekle)
         islem_bar.addWidget(btn_zimmet)
         islem_bar.addWidget(btn_iade)
+        islem_bar.addWidget(btn_sil)
         self.ana_duzen.addLayout(islem_bar)
 
         # TABLO SİSTEMİ: Verilerin listelendiği ana ızgara.
@@ -240,24 +401,64 @@ class KutuphaneUygulamasi(QMainWindow):
         b.setCursor(Qt.PointingHandCursor)
         return b
 
-    # Veritabanındaki kitapları tabloya aktarır.
+    # Veritabanından kitap kayıtlarını çekip tabloya yükler. Arama kutusundaki metne göre filtreleme yapar.
     def kayitlari_yukle(self):
         arama = self.txt_arama.text().lower()
         self.tablo.setRowCount(0)
         with sqlite3.connect("kutuphane.db") as baglanti:
             cursor = baglanti.cursor()
-            # SQL LIKE sorgusu ile isim, barkod veya kişi bazlı arama yapılır.
+            # ID'yi hala çekiyoruz (arka planda silme/güncelleme için lazım) ama ekranda göstermeyeceğiz
             cursor.execute("""SELECT id, isim, yazar, barkod_no, kategori, durum, zimmetli_kisi, alis_tarihi 
                            FROM kitaplar WHERE lower(isim) LIKE ? OR lower(barkod_no) LIKE ? OR lower(zimmetli_kisi) LIKE ?""", 
                            (f'%{arama}%', f'%{arama}%', f'%{arama}%'))
-            for i, satir in enumerate(cursor.fetchall()):
+            
+            veriler = cursor.fetchall()
+            for i, satir in enumerate(veriler):
                 self.tablo.insertRow(i)
-                for j, veri in enumerate(satir):
+                
+                # --- SIRALAMA SİSTEMİ BURADA BAŞLIYOR ---
+                # Gerçek ID yerine satır indeksinin 1 fazlasını (i+1) yazdırıyoruz
+                sira_no_item = QTableWidgetItem(str(i + 1))
+                sira_no_item.setTextAlignment(Qt.AlignCenter) # Ortaya hizalayalım, şık dursun
+                
+                # Veritabanındaki GERÇEK ID'yi gizli bir veri (UserRole) olarak saklıyoruz 
+                # Böylece silme butonu hangi ID'yi sileceğini hala bilecek
+                sira_no_item.setData(Qt.UserRole, str(satir[0])) 
+                
+                self.tablo.setItem(i, 0, sira_no_item)
+                # ----------------------------------------
+
+                # Diğer sütunları (1'den başlayarak) doldurmaya devam et
+                for j in range(1, len(satir)):
+                    veri = satir[j]
                     item = QTableWidgetItem(str(veri))
-                    # Durum sütunu (Mevcut/Zimmetli) için renklendirme.
-                    if j == 5: 
+                    if j == 5: # Durum sütunu renklendirmesi
                         item.setForeground(QColor("#27ae60" if veri == "Mevcut" else "#e67e22"))
                     self.tablo.setItem(i, j, item)
+                    self.istatistikleri_guncelle()
+
+    # Kitap ve öğrenci istatistiklerini günceller. Toplam kitap sayısı ve toplam öğrenci sayısını ekranda gösterir.
+    def istatistikleri_guncelle(self):
+        try:
+            with sqlite3.connect("kutuphane.db") as baglanti:
+                cursor = baglanti.cursor()
+                
+                # Kitap sayısını al
+                cursor.execute("SELECT COUNT(*) FROM kitaplar")
+                kitap_sayisi = cursor.fetchone()[0]
+                
+                # Öğrenci sayısını al
+                cursor.execute("SELECT COUNT(*) FROM ogrenciler")
+                ogrenci_sayisi = cursor.fetchone()[0]
+                
+                # Ekrana yazdır
+                self.lbl_toplam_kitap.setText(f"📚 Toplam Kitap: {kitap_sayisi}")
+                self.lbl_toplam_ogrenci.setText(f"👤 Toplam Öğrenci: {ogrenci_sayisi}")
+                
+        except Exception as e:
+            print(f"İstatistik hatası: {e}")
+
+
 
     # Yeni kitap eklerken aynı zamanda rastgele EAN-13 barkodu üretir.
     def kitap_ekle_penceresi_ac(self):
@@ -290,7 +491,9 @@ class KutuphaneUygulamasi(QMainWindow):
                 self.kayitlari_yukle()
             else:
                 QMessageBox.warning(self, "Hata", "Kitap adı ve yazar boş bırakılamaz!")
+        self.istatistikleri_guncelle()
 
+        
     # Excel dosyasından öğrenci listesini topluca veritabanına aktarır.
     def excel_yukle(self):
         yol, _ = QFileDialog.getOpenFileName(self, "Excel Seç", "", "Excel Files (*.xlsx *.xls)")
@@ -307,6 +510,8 @@ class KutuphaneUygulamasi(QMainWindow):
                 QMessageBox.information(self, "Başarılı", "Öğrenci listesi güncellendi.")
             except Exception as e:
                 QMessageBox.critical(self, "Hata", f"Excel yüklenirken hata oluştu: {str(e)}")
+            self.istatistikleri_guncelle()
+
 
     # Öğrencileri veritabanından çekip arama listesine hazır hale getirir.
     def ogrencileri_veritabanindan_cek(self):
