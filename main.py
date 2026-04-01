@@ -188,40 +188,49 @@ class KutuphaneUygulamasi(QMainWindow):
         self.kayitlari_yukle()       # Kitapları tabloya çek
         self.ogrencileri_veritabanindan_cek()
 
-    # Kitap silme işlemi: Seçilen kitabı veritabanından kaldırır ve varsa o kitaba ait ödünç kayıtlarını da temizler.
+    # Seçilen kitabı veritabanından siler ve ilgili barkod dosyasını da kaldırır.
     def kitap_sil(self):
-        # Tablodan seçili satırı al
         secili_satir = self.tablo.currentRow()
         
         if secili_satir < 0:
             QMessageBox.warning(self, "Hata", "Lütfen silmek istediğiniz kitabı tablodan seçin!")
             return
 
-        # ID ve Kitap Adını al (Kullanıcıya hangi kitabı sildiğini sormak için)
+        # Gizli veriden Gerçek ID'yi ve tablodan Kitap Adı/Yazar bilgilerini alıyoruz
         k_id = self.tablo.item(secili_satir, 0).data(Qt.UserRole)
         k_adi = self.tablo.item(secili_satir, 1).text()
+        yazar_adi = self.tablo.item(secili_satir, 2).text() # Yazar adını da alıyoruz
 
-        # Onay Kutusu
         cevap = QMessageBox.question(self, "Silme Onayı", 
-                                    f"'{k_adi}' isimli kitabı silmek istediğinize emin misiniz?\nBu işlem geri alınamaz!",
+                                    f"'{k_adi}' isimli kitabı ve barkod dosyasını silmek istediğinize emin misiniz?",
                                     QMessageBox.Yes | QMessageBox.No)
 
         if cevap == QMessageBox.Yes:
             try:
+                # --- DOSYA SİLME İŞLEMİ ---
+                def temizle(metin):
+                    return "".join([c for c in metin if c.isalnum()]).strip()
+
+                # Barkod oluştururken kullandığımız aynı isimlendirme formatı:
+                dosya_adi = f"{temizle(k_adi)}_{temizle(yazar_adi)}.png"
+                dosya_yolu = os.path.join("barkodlar", dosya_adi)
+
+                if os.path.exists(dosya_yolu):
+                    os.remove(dosya_yolu)
+                # --------------------------
+
                 with sqlite3.connect("kutuphane.db") as baglanti:
                     cursor = baglanti.cursor()
-                    # Veritabanından sil
                     cursor.execute("DELETE FROM kitaplar WHERE id = ?", (k_id,))
-                    # Varsa o kitaba ait ödünç kayıtlarını da temizlemek istersen:
                     cursor.execute("DELETE FROM odunc_kayitlari WHERE kitap_id = ?", (k_id,))
                     baglanti.commit()
                 
-                # Tabloyu yenile
                 self.kayitlari_yukle()
-                QMessageBox.information(self, "Başarılı", "Kitap sistemden kaldırıldı.")
+                self.istatistikleri_guncelle() # Sayaçları da yenilemiş oluyoruz
+                QMessageBox.information(self, "Başarılı", "Kitap ve barkod dosyası başarıyla silindi.")
+                
             except Exception as e:
                 QMessageBox.critical(self, "Hata", f"Silme işlemi sırasında bir hata oluştu: {str(e)}")
-        self.istatistikleri_guncelle()
 
 
     # kitaplerı bu fonsiyon ile topluca ekleriz. Excel dosyasındaki her satır için kitap kaydı oluşturur ve barkod üretir.
@@ -493,7 +502,7 @@ class KutuphaneUygulamasi(QMainWindow):
                 QMessageBox.warning(self, "Hata", "Kitap adı ve yazar boş bırakılamaz!")
         self.istatistikleri_guncelle()
 
-        
+
     # Excel dosyasından öğrenci listesini topluca veritabanına aktarır.
     def excel_yukle(self):
         yol, _ = QFileDialog.getOpenFileName(self, "Excel Seç", "", "Excel Files (*.xlsx *.xls)")
