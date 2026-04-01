@@ -269,9 +269,23 @@ class KutuphaneUygulamasi(QMainWindow):
                     cursor = baglanti.cursor()
                     cursor.execute("INSERT INTO kitaplar (isim, yazar, kategori) VALUES (?, ?, ?)", (ad, yazar, kategori))
                     k_id = cursor.lastrowid
-                    # 12 haneli rastgele sayı üretilir (Barkod kütüphanesi sonuna kontrol hanesi ekler).
+                    
+                    # 12 haneli rastgele sayı üretilir
                     b_no = "".join([str(random.randint(0, 9)) for _ in range(12)])
-                    barcode.get_barcode_class('ean13')(b_no, writer=ImageWriter()).save(f"barkodlar/barkod_{k_id}")
+                    
+                    # --- DOSYA ADI OLUŞTURMA (KitapAdı_YazarAdı) ---
+                    # Geçersiz karakterleri temizleme fonksiyonu (/, \, *, ?, ", <, >, | gibi karakterleri siler)
+                    def temizle(metin):
+                        return "".join([c for c in metin if c.isalnum()]).strip()
+
+                    temiz_ad = temizle(ad)
+                    temiz_yazar = temizle(yazar)
+                    dosya_adi = f"{temiz_ad}_{temiz_yazar}"
+                    
+                    # Barkodu "KitapAdı_YazarAdı" formatında kaydet
+                    barcode.get_barcode_class('ean13')(b_no, writer=ImageWriter()).save(f"barkodlar/{dosya_adi}")
+                    # -----------------------------------------------
+
                     cursor.execute("UPDATE kitaplar SET barkod_no = ? WHERE id = ?", (b_no + "0", k_id))
                 self.kayitlari_yukle()
             else:

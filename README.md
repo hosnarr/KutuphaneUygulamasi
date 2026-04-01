@@ -1,4 +1,4 @@
 # KutuphaneUygulamas-
 
-Bu uygulama sizin evdeki kitaplarınızı kontrol etmenize yarayacak.
-11111
+Excel dosyası a stünu öğrenci no b sütunu öğrenci isim soyismi olmalı!!!!!!!!!
+
