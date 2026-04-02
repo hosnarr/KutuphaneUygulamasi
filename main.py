@@ -536,42 +536,31 @@ class KutuphaneUygulamasi(QMainWindow):
             QMessageBox.warning(self, "Hata", "Lütfen önce tablodan bir kitap seçin!")
             return
         
-        k_id = self.tablo.item(secili, 0).text()
+        # BURASI DEĞİŞTİ: .text() yerine .data(Qt.UserRole)
+        k_id = self.tablo.item(secili, 0).data(Qt.UserRole)
         durum = self.tablo.item(secili, 5).text()
-        
-        if durum != "Mevcut":
-            QMessageBox.warning(self, "Hata", "Kitap zaten ödünç verilmiş!")
-            return
-
-        if not self.tum_ogrenciler:
-            QMessageBox.warning(self, "Hata", "Öğrenci listesi boş! Lütfen önce Excel yükleyin.")
-            return
-
-        pencere = ZimmetlePenceresi(self.tum_ogrenciler, self)
-        if pencere.exec_():
-            secilen = pencere.secilen_ogrenci()
-            if secilen:
-                bugun = datetime.now().strftime("%Y-%m-%d")
-                teslim = (datetime.now() + timedelta(days=15)).strftime("%Y-%m-%d") # 15 gün süre tanır.
-                
-                with sqlite3.connect("kutuphane.db") as baglanti:
-                    cursor = baglanti.cursor()
-                    cursor.execute("UPDATE kitaplar SET durum='Zimmetli', zimmetli_kisi=?, alis_tarihi=? WHERE id=?", (secilen, bugun, k_id))
-                    cursor.execute("INSERT INTO odunc_kayitlari (kitap_id, ogrenci_adi, verilis_tarihi, teslim_tarihi) VALUES (?,?,?,?)", (k_id, secilen, bugun, teslim))
-                
-                self.kayitlari_yukle()
-                QMessageBox.information(self, "Başarılı", f"Kitap başarıyla {secilen} kişisine zimmetlendi.")
 
     # Kitabı geri alma ve durumunu 'Mevcut' olarak güncelleme.
     def iade_al(self):
         secili = self.tablo.currentRow()
-        if secili < 0: return
-        k_id = self.tablo.item(secili, 0).text()
+        if secili < 0: 
+            QMessageBox.warning(self, "Hata", "Lütfen iade edilecek kitabı seçin!")
+            return
+            
+        # .text() yerine UserRole içinde sakladığımız GERÇEK ID'yi alıyoruz
+        k_id = self.tablo.item(secili, 0).data(Qt.UserRole)
+        
         with sqlite3.connect("kutuphane.db") as baglanti:
             cursor = baglanti.cursor()
+            # Kitap durumunu güncelle
             cursor.execute("UPDATE kitaplar SET durum='Mevcut', zimmetli_kisi='-', alis_tarihi='-' WHERE id=?", (k_id,))
+            # Ödünç kaydını kapat
             cursor.execute("UPDATE odunc_kayitlari SET iade_edildi=1 WHERE kitap_id=? AND iade_edildi=0", (k_id,))
+            baglanti.commit()
+            
         self.kayitlari_yukle()
+        self.istatistikleri_guncelle()
+        QMessageBox.information(self, "Başarılı", "Kitap iade alındı.")
 
 # Uygulama Başlatıcı
 if __name__ == "__main__":
